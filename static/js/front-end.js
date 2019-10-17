@@ -83,6 +83,7 @@ var app = new Vue({
         takePhoto: function () {
             takeId = guid();
             this.socket.emit('take-photo', {takeId: takeId, time: Date.now()});
+			this.socket.emit('take-photo-webcam', {takeId: takeId, time: Date.now()});	//@Lip add for WebCam support
         },
         updateSoftware: function () {
             this.socket.emit('update-software', {});

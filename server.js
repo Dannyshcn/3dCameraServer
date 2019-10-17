@@ -114,7 +114,7 @@ io.on('connection', function (socket) {
         var i = findCameraIndex(socket.id);
         cameras[i].type = 'client';
 
-        clientUpdateIntervalTimer = setInterval(clientUpdate, 100);
+        clientUpdateIntervalTimer = setInterval(clientUpdate, 16);
     });
 
 
@@ -141,6 +141,27 @@ io.on('connection', function (socket) {
         }
         msg.socketId = socket.id;
         io.emit('take-photo', msg);
+
+        for (let i = 0; i < cameras.length; i++) {
+            if (cameras[i].type == 'camera') {
+                cameras[i].waitingOnPhoto = true;
+                cameras[i].receivedPhoto  = false;
+            }
+        }
+
+    });
+
+    //@Lip take photo with webcam API
+    socket.on('take-photo', function(msg){
+        console.log("Take a new photo-WebCam");
+
+        let folderName = './images/' + getFolderName(msg.time);
+
+        if (!fs.existsSync(folderName)) {
+            fs.mkdirSync(folderName);
+        }
+        msg.socketId = socket.id;
+        io.emit('take-photo-webcam', msg);
 
         for (let i = 0; i < cameras.length; i++) {
             if (cameras[i].type == 'camera') {
