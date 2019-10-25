@@ -1,7 +1,5 @@
 var clientId = guid();
 
-
-
 var app = new Vue({
     el: '#app',
     data: {
@@ -25,7 +23,8 @@ var app = new Vue({
                 imagePath: '/img/placeholder.png',
                 cameraName: 'test'
             }
-        ]
+        ],
+		camerasMap: []
     },
     computed: {
         orderedCameras: function () {
@@ -35,7 +34,10 @@ var app = new Vue({
                 }
                 return a - b;
             });
-        }
+        },
+		camerasMapList: function(){ //@Lip add camerasMap
+			return this.camerasMap;
+		}
     },
     created: function () {
         this.socket = io('http://' + location.hostname + ':3000');
@@ -44,7 +46,6 @@ var app = new Vue({
 
         var that = this;
         this.socket.on('camera-update', function(response) {
-            //console.log("camera update", response);
             that.cameras = [];
             for (let i = 0; i < response.length; i++) {
                 if (response[i].type == 'camera') {
@@ -66,6 +67,31 @@ var app = new Vue({
             }
 
         });
+		
+		this.socket.on('camerasMap-update', function(response) {
+            console.log("-=-=-=-=-camera update", response);
+            that.camerasMap = [];
+			for (var value of response.values()) {
+				for (let i = 0; i < value.length; i++) {
+					if (value[i].type == 'camera') {
+						var photoError = '';
+						if (value[i].photoError) {
+							photoError = 'yes';
+						}
+						value[i].photoError = photoError;
+						lastUpdateProblem = false;
+						var timeSinceLastUpdate = Math.round((new Date() - new Date(response[i].lastCheckin)) / 100) / 10;
+						if ((timeSinceLastUpdate > 10) && !value[i].photoSending) {
+							lastUpdateProblem = true;
+						}
+						value[i].lastUpdateProblem = lastUpdateProblem;
+						value[i].timeSinceLastUpdate = timeSinceLastUpdate;
+
+						that.camerasMap.push(value[i]);
+					}
+				}
+			}
+        });
 
         this.socket.on('new-photo', function(data){
             that.photos.push(data);
@@ -75,6 +101,14 @@ var app = new Vue({
             console.log(data);
         });
         
+		this.socket.on('command-finished', function(data){
+            console.log(data);
+        });
+		
+		this.socket.on('command-error', function(data){
+            console.log(data);
+        });
+		
         this.socket.on('take-photo', function(data){
             that.photos = [];
         });
@@ -92,7 +126,13 @@ var app = new Vue({
             console.log("Update name", socketId, event.target.value);
             this.socket.emit('update-name', {socketId: socketId, newName: event.target.value});
             event.target.value = null;
-        }
+        },
+		executeCommand: function(event) {//@Lip execute command
+			console.log("Execute command", event.target.value);
+			var cmd = event.target.value;
+			this.socket.emit('execute-command', {command: cmd});
+			event.target.value = null;		
+		}
     }
 })
 

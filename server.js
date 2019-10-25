@@ -10,6 +10,7 @@ var io = require('socket.io')(server);
 var fs = require('fs');
 
 var cameras = [];
+var camerasMap = new Map();
 
 var clientUpdateIntervalTimer;
 
@@ -24,6 +25,7 @@ app.get('/', function (request, response) {
 app.post('/new-image', upload.single('image'), function (request, response) {
     console.log("received a new image", request.body.socketId);
     if (!request.file || !request.body.startTime) {
+		console.log("Returning");
         return;
     }
 
@@ -39,11 +41,16 @@ app.post('/new-image', upload.single('image'), function (request, response) {
 
         // The camera has been moved to the right place, update our data array to show this
         var i = findCameraIndexByName(request.body.cameraName);
-        cameras[i].photoError     = false;
-        cameras[i].waitingOnPhoto = false;
-        cameras[i].photoSending   = false;
-        cameras[i].receivedPhoto  = true;
-        cameras[i].latestImage    = folderName + '/' + request.body.fileName;
+		if ( i < cameras.length ){
+			cameras[i].photoError     = false;
+			cameras[i].waitingOnPhoto = false;
+			cameras[i].photoSending   = false;
+			cameras[i].receivedPhoto  = true;
+			cameras[i].latestImage    = folderName + '/' + request.body.fileName;
+		}else{
+			console.log("Camera not found: " + request.body.cameraName );
+		}
+
 
         fs.unlink(tmpPath, function() {
             if (err) throw err;
@@ -82,7 +89,14 @@ io.on('connection', function (socket) {
         version: null,
         photoStatus: null
     });
-
+	
+	
+	//@Lip allow multi-cameras for 1 client
+	if ( !camerasMap.has( socket.id )){	//If no record is found for this client
+		camerasMap.set( socket.id, new Map());
+	}
+	
+	console.log( camerasMap );
 
     // Listen for heartbeat notifications from the cameras
     socket.on('camera-online', function(msg){
@@ -104,6 +118,30 @@ io.on('connection', function (socket) {
         }
 
         //io.emit('camera-update', cameras);
+		
+		//@Lip update the cams for client
+		// Update our cache
+		var client_cams = camerasMap.get( socket.id );
+		var cam;
+		if ( client_cams.has( msg.name )){
+			cam = client_cams.get( msg.name );
+		}else{
+			client_cams.set( msg.name, {});
+			cam = client_cams.get( msg.name );
+		}
+		cam.type             = 'camera';
+		cam.name             = msg.name;
+		cam.ipAddress        = msg.ipAddress;
+		cam.lastCheckin      = new Date();
+		cam.updateInProgress = msg.updateInProgress;
+		if (msg.version) {
+			cam.version = msg.version;
+		}
+		if (msg.hostName) {
+			cam.hostName = msg.hostName;
+		} else {
+			cam.hostName = null;
+		}
     });
 
 
@@ -113,22 +151,42 @@ io.on('connection', function (socket) {
         // Update our cache
         var i = findCameraIndex(socket.id);
         cameras[i].type = 'client';
+		
+		console.log("========---Client---=========");
 
-        clientUpdateIntervalTimer = setInterval(clientUpdate, 16);
+        clientUpdateIntervalTimer = setInterval(clientUpdate, 100);
     });
 
 
     socket.on('disconnect', function(msg, msg2) {
         var i = findCameraIndex(socket.id);
         cameras.splice(i, 1);
+		
+		//@Lip refresh the cameras Map
+		camerasMap.delete( socket.id );
 
         io.emit('camera-update', cameras);
+		//io.emit('camerasMap-update', camerasMap);	//@Lip update camersa
 
         if (cameras[i] && cameras[i].type == 'type') {
             clearInterval(clientUpdateIntervalTimer);
         }
     });
 
+	//
+    socket.on('execute-command', function(msg){
+        console.log("Execute Command : " + msg.command);
+
+        msg.socketId = socket.id;
+        io.emit('execute-command', msg);
+
+        for (let i = 0; i < cameras.length; i++) {
+            if (cameras[i].type == 'camera') {
+                cameras[i].command = msg;
+            }
+        }
+
+    });
 
     // When a take photo message comes in create the folder, update the cameras and pass on the take message to devices
     socket.on('take-photo', function(msg){
@@ -161,14 +219,15 @@ io.on('connection', function (socket) {
             fs.mkdirSync(folderName);
         }
         msg.socketId = socket.id;
-        io.emit('take-photo-webcam', msg);
+        
+		//io.emit('take-photo-webcam', msg); //@Lip as webcam to take photo as well
 
-        for (let i = 0; i < cameras.length; i++) {
-            if (cameras[i].type == 'camera') {
-                cameras[i].waitingOnPhoto = true;
-                cameras[i].receivedPhoto  = false;
-            }
-        }
+        // for (let i = 0; i < cameras.length; i++) {
+            // if (cameras[i].type == 'camera') {
+                // cameras[i].waitingOnPhoto = true;
+                // cameras[i].receivedPhoto  = false;
+            // }
+        // }
 
     });
 
@@ -262,6 +321,23 @@ io.on('connection', function (socket) {
     });
 
 
+	//@Lip command responses
+    socket.on('command-finished', function(msg){
+        var i = findCameraIndex(socket.id);
+        cameras[i].command = "<span style='color: greenyellow'>Done</span>";
+        io.emit('command-finished', cameras[i].ipAddress + ":" + msg);
+        io.emit('camera-update', cameras);
+    });
+	
+	//@Lip command responses
+    socket.on('command-error', function(msg){
+		console.log( msg );
+        var i = findCameraIndex(socket.id);
+        cameras[i].command = "<span style='color: red'>Failed</span>";
+		msg.id = socket.id;
+        io.emit('command-error', cameras[i].ipAddress + ":" + msg);
+        io.emit('camera-update', cameras);
+    });
 });
 
 function clientUpdate() {
@@ -286,6 +362,7 @@ function clientUpdate() {
 
 
     io.emit('camera-update', cameras);
+	//io.emit('camerasMap-update', camerasMap);	//@Lip update camerasMap
 
     // See if any of the cameras have a new image
     for (let i = 0; i < cameras.length; i++) {

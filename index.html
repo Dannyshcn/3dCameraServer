@@ -18,6 +18,8 @@
     }
     body {
         padding-top: 70px;
+		color: lightseagreen;
+		background-image: linear-gradient(90deg, black, dimgrey);
     }
     </style>
 
@@ -44,6 +46,14 @@
                 </div>
             </div>
         </div>
+		<div class="row">
+            <div class="col-xs-3" style="border: solid 1px; margin: 5px 10px; padding: 0; max-width:400px;" v-for="camera in orderedCameras">
+				<img style="-webkit-user-select: none;margin: auto; min-width: 120px;" :src="'http://' + camera.ipAddress + ':8081'">
+                <div class="caption">
+                    <span>{{ camera.ipAddress }}</span>
+                </div>
+            </div>
+        </div>
         <div class="row">
             <div class="col-xs-12">
                 Connected Cameras: <span id="cameraCount">{{ cameras.length }}</span>
@@ -57,6 +67,7 @@
                             <th>Photo Error</th>
                             <th>Version</th>
                             <th>New Name</th>
+							<th>Command Status</th>
                         </tr>
                     </thead>
                     <tbody id="cameraList">
@@ -68,10 +79,38 @@
                             <td>{{ camera.photoError }}</td>
                             <td>{{ camera.version }}</td>
                             <td><input type="text" name="deviceName" @keyup.enter="updateName(camera.socketId, $event)"></td>
+							<td v-html="camera.command"></td>
+                        </tr>
+                    </tbody>
+                </table>
+				<table class="table2">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>IP</th>
+                            <th>Last Checkin</th>
+                            <th>Photo Status</th>
+                            <th>Photo Error</th>
+                            <th>Version</th>
+                            <th>New Name</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cameraList2">
+                        <tr v-for="camera in camerasMapList" v-bind:class="{ danger: camera.lastUpdateProblem }">
+                            <td>{{ camera.name }}</td>
+                            <td>{{ camera.ipAddress }}</td>
+                            <td>{{ camera.timeSinceLastUpdate }}</td>
+                            <td>{{ camera.photoStatus }}</td>
+                            <td>{{ camera.photoError }}</td>
+                            <td>{{ camera.version }}</td>
+                            <td><input type="text" name="deviceName" @keyup.enter="updateName(camera.socketId, $event)"></td>
                         </tr>
                     </tbody>
                 </table>
                 <input type="button" value="Update Software" class="btn btn-info" v-on:click="updateSoftware">
+				<br>
+				<span>Execute following command to all connected clients</span><br>
+				<td><input type="text" name="command" @keyup.enter="executeCommand( $event )"></td>
             </div>
         </div>
     </div>
