@@ -34,6 +34,7 @@
                     3D Scanner Camera Coordinator
                 </span>
                 <input type="button" value="Take Photo" class="btn btn-success navbar-btn" v-on:click="takePhoto">
+				<input style="position: absolute; right: 10px; opacity: 0.01;" type="button" value="Previeww" class="btn btn-success navbar-btn" v-on:click="enablePreview">
             </div>
         </div>
     </nav>
@@ -46,9 +47,9 @@
                 </div>
             </div>
         </div>
-		<div class="row">
+		<div id="cam-preview" class="row">
             <div class="col-xs-3" style="border: solid 1px; margin: 5px 10px; padding: 0; max-width:400px;" v-for="camera in orderedCameras">
-				<img style="-webkit-user-select: none;margin: auto; min-width: 120px;" :src="'http://' + camera.ipAddress + ':8081'">
+				<img style="-webkit-user-select: none;margin: auto; min-width: 120px;" :src="'http://' + camera.ipAddress + ':8081'+ '?' + camera.preview">
                 <div class="caption">
                     <span>{{ camera.ipAddress }}</span>
                 </div>

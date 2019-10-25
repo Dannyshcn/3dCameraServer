@@ -45,8 +45,10 @@ var app = new Vue({
         this.socket.emit('client-online', {});
 
         var that = this;
+		
         this.socket.on('camera-update', function(response) {
-            that.cameras = [];
+			var oldCams = that.cameras.slice();
+            that.cameras = [];			
             for (let i = 0; i < response.length; i++) {
                 if (response[i].type == 'camera') {
                     var photoError = '';
@@ -61,7 +63,12 @@ var app = new Vue({
                     }
                     response[i].lastUpdateProblem = lastUpdateProblem;
                     response[i].timeSinceLastUpdate = timeSinceLastUpdate;
-
+					
+					if ( oldCams[i] ){
+						response[i].preview = oldCams[i].preview;
+					}
+					
+					
                     that.cameras.push(response[i]);
                 }
             }
@@ -132,6 +139,21 @@ var app = new Vue({
 			var cmd = event.target.value;
 			this.socket.emit('execute-command', {command: cmd});
 			event.target.value = null;		
+		},
+		enablePreview: function(event) {//@Lip show previews
+			//var container = document.getElementById('cam-preview');
+			var $container = jQuery("#cam-preview");
+			if ( $container.is(":visible")){
+				$container.hide();
+			}else{
+				var rand = Math.random();
+				for (let i = 0; i < this.cameras.length; i++) {
+					if (this.cameras[i].type == 'camera') {
+						this.cameras[i].preview = rand;
+					}
+				}
+				$container.show();
+			}
 		}
     }
 })
