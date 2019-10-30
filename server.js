@@ -208,6 +208,11 @@ io.on('connection', function (socket) {
         }
 
     });
+	
+	socket.on('lights-switch', function(msg){
+		var state = msg.state;
+		io.emit('lights-switch',state);
+	});
 
     //@Lip take photo with webcam API
     socket.on('take-photo', function(msg){

@@ -34,6 +34,7 @@
                     3D Scanner Camera Coordinator
                 </span>
                 <input type="button" value="Take Photo" class="btn btn-success navbar-btn" v-on:click="takePhoto">
+				<input id="lights-button" type="button" value="Lights On" class="btn btn-success navbar-btn" v-on:click="lightSwitch">
 				<input style="position: absolute; right: 10px; opacity: 0.01;" type="button" value="Previeww" class="btn btn-success navbar-btn" v-on:click="enablePreview">
             </div>
         </div>
@@ -111,7 +112,7 @@
                 <input type="button" value="Update Software" class="btn btn-info" v-on:click="updateSoftware">
 				<br>
 				<span>Execute following command to all connected clients</span><br>
-				<td><input type="text" name="command" @keyup.enter="executeCommand( $event )"></td>
+				<td><input type="text" style="width: 100%;margin: 5px 0px;" name="command" @keyup.enter="executeCommand( $event )"></td>
             </div>
         </div>
     </div>

@@ -154,6 +154,20 @@ var app = new Vue({
 				}
 				$container.show();
 			}
+		},
+		lightSwitch: function(event) {//@Lip turn on lights
+			
+			var $button = $('#lights-button');
+			console.log( $button );
+			if ( "Lights On" == $button[0].value ) {
+				this.socket.emit('lights-switch', {state: "on"});
+				$button[0].value = "Lights Off";
+				$button.css({"background-color": "red", "border-radius": "10%"});
+			}else{
+				this.socket.emit('lights-switch', {state: "off"});
+				$button[0].value = "Lights On";
+				$button.css("background-color", "#5cb85c");
+			}			
 		}
     }
 })
