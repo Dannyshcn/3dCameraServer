@@ -6,6 +6,7 @@ var app = new Vue({
         socket: null,
         message: 'Hello Vue!',
         cameras: [],
+        computes: [],
         photos: [
             {
                 imagePath: '/img/placeholder.png',
@@ -35,6 +36,9 @@ var app = new Vue({
                 return a - b;
             });
         },
+        orderedComputes: function() {
+          return this.computes;
+        },
 		camerasMapList: function(){ //@Lip add camerasMap
 			return this.camerasMap;
 		}
@@ -45,36 +49,40 @@ var app = new Vue({
         this.socket.emit('client-online', {});
 
         var that = this;
-		
-        this.socket.on('camera-update', function(response) {
-			var oldCams = that.cameras.slice();
-            that.cameras = [];			
-            for (let i = 0; i < response.length; i++) {
-                if (response[i].type == 'camera') {
-                    var photoError = '';
-                    if (response[i].photoError) {
-                        photoError = 'yes';
-                    }
-                    response[i].photoError = photoError;
-                    lastUpdateProblem = false;
-                    var timeSinceLastUpdate = Math.round((new Date() - new Date(response[i].lastCheckin)) / 100) / 10;
-                    if ((timeSinceLastUpdate > 10) && !response[i].photoSending) {
-                        lastUpdateProblem = true;
-                    }
-                    response[i].lastUpdateProblem = lastUpdateProblem;
-                    response[i].timeSinceLastUpdate = timeSinceLastUpdate;
-					
-					if ( oldCams[i] ){
-						response[i].preview = oldCams[i].preview;
-					}
-					
-					
-                    that.cameras.push(response[i]);
-                }
-            }
 
+        this.socket.on('camera-update', function(response) {
+    			var oldCams = that.cameras.slice();
+          that.cameras = [];
+          for (let i = 0; i < response.length; i++) {
+            if (response[i].type == 'camera' || response[i].type == 'compute') {
+                var photoError = '';
+                if (response[i].photoError) {
+                    photoError = 'yes';
+                }
+                response[i].photoError = photoError;
+                lastUpdateProblem = false;
+                var timeSinceLastUpdate = Math.round((new Date() - new Date(response[i].lastCheckin)) / 100) / 10;
+                if ((timeSinceLastUpdate > 10) && !response[i].photoSending) {  //@Lip if the camera is not sending photo and not signalling a checkin in 10 secs
+                    lastUpdateProblem = true;
+                }
+                response[i].lastUpdateProblem = lastUpdateProblem;
+                response[i].timeSinceLastUpdate = timeSinceLastUpdate;
+
+      					if ( oldCams[i] ){
+      						response[i].preview = oldCams[i].preview;
+      					}
+                that.cameras.push(response[i]);
+            }
+          }
         });
-		
+
+        this.socket.on('compute-update', function(response) {
+          for ( var i=0; i<response.length; ++i ){
+            ///response[i].warning = false;
+          }
+          that.computes = response;
+        });
+
 		this.socket.on('camerasMap-update', function(response) {
             console.log("-=-=-=-=-camera update", response);
             that.camerasMap = [];
@@ -100,25 +108,42 @@ var app = new Vue({
 			}
         });
 
-        this.socket.on('new-photo', function(data){
-            that.photos.push(data);
-        });
+    this.socket.on('new-photo', function(data){
+        that.photos.push(data);
+    });
 
-        this.socket.on('photo-error', function(data){
-            console.log(data);
-        });
-        
+    this.socket.on('photo-error', function(data){
+        console.log(data);
+    });
+
 		this.socket.on('command-finished', function(data){
-            console.log(data);
-        });
-		
+      console.log(data);
+    });
+
 		this.socket.on('command-error', function(data){
-            console.log(data);
-        });
-		
-        this.socket.on('take-photo', function(data){
-            that.photos = [];
-        });
+      console.log(data);
+    });
+
+    this.socket.on('take-photo', function(data){
+      that.photos = [];
+      $()
+    });
+
+    this.socket.on('reconstruct-complete', function(data) {
+      var computeUnit = data.computeUnit;
+      var $fileDialog = $("#dir-" + computeUnit.ipAddress.replace( /\./g, "_" ));
+      var $button =  $("#btn-" + computeUnit.ipAddress.replace( /\./g, "_" ));
+
+      $button.prop('disabled', false);
+      $button.prop('value', "Reconstruct");
+      $button.css('background-color', "#31b0d5");
+      $fileDialog.prop('disabled', false);
+    });
+
+    this.socket.on('reconstruct-log', function(data){
+      var $logger = $('#reconstruct-logger');
+      $logger.text( data );
+    });
     },
     methods: {
         takePhoto: function () {
@@ -138,7 +163,7 @@ var app = new Vue({
 			console.log("Execute command", event.target.value);
 			var cmd = event.target.value;
 			this.socket.emit('execute-command', {command: cmd});
-			event.target.value = null;		
+			event.target.value = null;
 		},
 		enablePreview: function(event) {//@Lip show previews
 			//var container = document.getElementById('cam-preview');
@@ -156,9 +181,9 @@ var app = new Vue({
 			}
 		},
 		lightSwitch: function(event) {//@Lip turn on lights
-			
+
 			var $button = $('#lights-button');
-			console.log( $button );
+
 			if ( "Lights On" == $button[0].value ) {
 				this.socket.emit('lights-switch', {state: "on"});
 				$button[0].value = "Lights Off";
@@ -167,8 +192,18 @@ var app = new Vue({
 				this.socket.emit('lights-switch', {state: "off"});
 				$button[0].value = "Lights On";
 				$button.css("background-color", "#5cb85c");
-			}			
-		}
+			}
+		},
+    reconstructObj: function( e, elem) {//@Lip ask the compute-node/cloud to reconstuct the model
+      var $fileDialog = $("#dir-" + elem.ipAddress.replace( /\./g, "_" ));
+      var $button =  $("#btn-" + elem.ipAddress.replace( /\./g, "_" ));
+
+      this.socket.emit('reconstruct-obj', { computeUnit: elem, files: $fileDialog[0].files });
+      $button.prop('disabled', true);
+      $button.prop('value', "Processing...");
+      $button.css('background-color', "pink");
+      $fileDialog.prop('disabled', true);
+    }
     }
 })
 

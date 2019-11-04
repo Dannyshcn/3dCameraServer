@@ -4,15 +4,22 @@ var multer  = require('multer')
 var upload = multer({ dest: 'uploads/' })
 
 var server = require('http').Server(app);
+var ss = require('socket.io-stream');
 
 var io = require('socket.io')(server);
 
+var os = require('os');
 var fs = require('fs');
+var path = require('path');
+const process = require('process');
 
 var cameras = [];
 var camerasMap = new Map();
 
 var clientUpdateIntervalTimer;
+var computeNodeUpdateIntervalTimer;
+
+var lastestCapturedFolder = "";  //The folder contain the latest captured image
 
 // Let the server listen on port 3000 for the websocket connection
 server.listen(3000);
@@ -57,6 +64,7 @@ app.post('/new-image', upload.single('image'), function (request, response) {
         });
     });
 
+    lastestCapturedFolder = folderName;
     response.sendStatus(201);
 });
 
@@ -71,54 +79,52 @@ app.listen(8080, function () {
 
 // When a new camera connects set up the following
 io.on('connection', function (socket) {
-    console.log('A connection was made', socket.id);
+  console.log('A connection was made:', cameras.length + " " + socket.id);
+
+  // Add the camera to a persistent list of devices
+  cameras.push({
+    socketId: socket.id,
+    type: null,
+    name: null,
+    ipAddress: null,
+    photoError: false,
+    photoTaken: false,
+    waitingOnPhoto: false,
+    lastCheckin: null,
+    photoSending: false,
+    receivedPhoto: false,
+    version: null,
+    photoStatus: null
+  });
 
 
-    // Add the camera to a persistent list of devices
-    cameras.push({
-        socketId: socket.id,
-        type: null,
-        name: null,
-        ipAddress: null,
-        photoError: false,
-        photoTaken: false,
-        waitingOnPhoto: false,
-        lastCheckin: null,
-        photoSending: false,
-        receivedPhoto: false,
-        version: null,
-        photoStatus: null
-    });
-	
-	
 	//@Lip allow multi-cameras for 1 client
-	if ( !camerasMap.has( socket.id )){	//If no record is found for this client
+	if ( !camerasMap.has( socket.id )){	//If no record is found for this 'client'
 		camerasMap.set( socket.id, new Map());
 	}
-	
-	console.log( camerasMap );
 
-    // Listen for heartbeat notifications from the cameras
-    socket.on('camera-online', function(msg){
+//	console.log( camerasMap );
 
-        // Update our cache
-        var i = findCameraIndex(socket.id);
-        cameras[i].type             = 'camera';
-        cameras[i].name             = msg.name;
-        cameras[i].ipAddress        = msg.ipAddress;
-        cameras[i].lastCheckin      = new Date();
-        cameras[i].updateInProgress = msg.updateInProgress;
-        if (msg.version) {
-            cameras[i].version = msg.version;
-        }
-        if (msg.hostName) {
-            cameras[i].hostName = msg.hostName;
-        } else {
-            cameras[i].hostName = null;
-        }
+  // Listen for heartbeat notifications from the cameras
+  socket.on('camera-online', function(msg){
+    // Update our cache
+    var i = findCameraIndex(socket.id);
+    cameras[i].type             = 'camera';
+    cameras[i].name             = msg.name;
+    cameras[i].ipAddress        = msg.ipAddress;
+    cameras[i].lastCheckin      = new Date();
+    cameras[i].updateInProgress = msg.updateInProgress;
+    if (msg.version) {
+        cameras[i].version = msg.version;
+    }
+    if (msg.hostName) {
+        cameras[i].hostName = msg.hostName;
+    } else {
+        cameras[i].hostName = null;
+    }
 
-        //io.emit('camera-update', cameras);
-		
+      //io.emit('camera-update', cameras);
+
 		//@Lip update the cams for client
 		// Update our cache
 		var client_cams = camerasMap.get( socket.id );
@@ -142,8 +148,29 @@ io.on('connection', function (socket) {
 		} else {
 			cam.hostName = null;
 		}
-    });
+  });
 
+    // Listen for heartbeat notifications from the cameras
+    socket.on('compute-online', function(msg){
+
+        // Update our cache
+        var i = findCameraIndex(socket.id);
+        cameras[i].type             = 'compute';
+        cameras[i].name             = "<span style='color: yellow'>" + msg.name + "Done</span>";
+        cameras[i].ipAddress        = msg.ipAddress;
+        cameras[i].lastCheckin      = new Date();
+        cameras[i].updateInProgress = msg.updateInProgress;
+        if (msg.version) {
+            cameras[i].version = msg.version;
+        }
+        if (msg.hostName) {
+            cameras[i].hostName = msg.hostName;
+        } else {
+            cameras[i].hostName = null;
+        }
+        //io.emit('camera-update', cameras);
+        console.log("Compute onlineeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    });
 
     // Sent by the web interface
     socket.on('client-online', function(msg){
@@ -151,17 +178,60 @@ io.on('connection', function (socket) {
         // Update our cache
         var i = findCameraIndex(socket.id);
         cameras[i].type = 'client';
-		
-		console.log("========---Client---=========");
 
-        clientUpdateIntervalTimer = setInterval(clientUpdate, 100);
+		    console.log("========---Client---=========");
+
+        clientUpdateIntervalTimer = setInterval(clientUpdate, 200);
+        computeNodeUpdateIntervalTimer = setInterval( computeNodeStatusUpdate, 3000);
     });
 
+    socket.on('reconstruct-obj', function(msg) {
+      var computeUnit = msg.computeUnit;
+    //  await sleep(200);
+      var targetFolder = lastestCapturedFolder;
+      if ( undefined !== msg.files.length ){
+        targetFolder = path.dirname( msg.files[0].webkitRelativePath );
+      }
+
+      if ( "" == targetFolder ){
+        console.log("No package reconized for reconstruction. Please capture the target first!");
+        io.emit('reconstruct-complete', {computeUnit:computeUnit});
+        return;
+      }
+      // Update our cache
+      var i = findCameraIndex(socket.id);
+      console.log("Reconstruct signal reciever: " + i );
+      if ( cameras[i].type !== 'client'){
+        return;
+      }
+
+      console.log("Ready to reconstruct!!!!!!");
+      let folderName = './images/' ;
+      var packageName = path.basename(targetFolder);
+      var filename = folderName + "/" + packageName + '.zip';
+      var AdmZip = require('adm-zip');
+      var zip = new AdmZip();
+      zip.addLocalFolder( folderName + "/" + packageName );
+      zip.writeZip( filename );
+
+      if ( computeSockets.has( computeUnit.ipAddress )) {
+        computes.get( computeUnit.ipAddress ).status = "Busy";  // @Lip change the status to busy
+        var socket_c = computeSockets.get( computeUnit.ipAddress );
+        socket_c.emit('reconstruct-obj', {name: packageName + '.zip'});
+      }else{
+        console.warn("Invalid compute node :" + computeUnit.ipAddress );
+      }
+
+      // Invoke the next step here however you like
+      //console.log(data);   // Put all of the code here (not the best solution)
+      //io.emit('reconstruct-obj', msg);          // Or put the next step in a function and invoke it
+
+    });
 
     socket.on('disconnect', function(msg, msg2) {
         var i = findCameraIndex(socket.id);
         cameras.splice(i, 1);
-		
+
 		//@Lip refresh the cameras Map
 		camerasMap.delete( socket.id );
 
@@ -208,34 +278,12 @@ io.on('connection', function (socket) {
         }
 
     });
-	
+
+
 	socket.on('lights-switch', function(msg){
 		var state = msg.state;
 		io.emit('lights-switch',state);
 	});
-
-    //@Lip take photo with webcam API
-    socket.on('take-photo', function(msg){
-        console.log("Take a new photo-WebCam");
-
-        let folderName = './images/' + getFolderName(msg.time);
-
-        if (!fs.existsSync(folderName)) {
-            fs.mkdirSync(folderName);
-        }
-        msg.socketId = socket.id;
-        
-		//io.emit('take-photo-webcam', msg); //@Lip as webcam to take photo as well
-
-        // for (let i = 0; i < cameras.length; i++) {
-            // if (cameras[i].type == 'camera') {
-                // cameras[i].waitingOnPhoto = true;
-                // cameras[i].receivedPhoto  = false;
-            // }
-        // }
-
-    });
-
 
     socket.on('update-software', function(msg){
         console.log("Updating software");
@@ -333,7 +381,7 @@ io.on('connection', function (socket) {
         io.emit('command-finished', cameras[i].ipAddress + ":" + msg);
         io.emit('camera-update', cameras);
     });
-	
+
 	//@Lip command responses
     socket.on('command-error', function(msg){
 		console.log( msg );
@@ -367,6 +415,7 @@ function clientUpdate() {
 
 
     io.emit('camera-update', cameras);
+    io.emit('compute-update', Array.from( computes.values()) );
 	//io.emit('camerasMap-update', camerasMap);	//@Lip update camerasMap
 
     // See if any of the cameras have a new image
@@ -424,3 +473,168 @@ function guid() {
   return s4() + s4() + '-' + s4() + '-' + s4() + '-' +
     s4() + '-' + s4() + s4() + s4();
 }
+
+/*===========================================================================
+For compute node
+
+*/
+var computes = new Map(); // The compute nodes
+var computeSockets = new Map(); // The sockets;
+
+function addComputeUnit( computeUnit, socket ){
+  computes.set( computeUnit.ipAddress , computeUnit );  // @Lip save the socket
+  computeSockets.set( computeUnit.ipAddress, socket ); //
+}
+
+function removeComputeUnit( ipAddress ){
+  computes.delete( ipAddress );  // @Lip save the socket
+  computeSockets.delete( ipAddress ); //
+}
+
+function findComputeNodes( computeIP )
+{
+  var socket_com = require('socket.io-client')(computeIP, {
+    secure: true,
+    reconnect: true,
+    rejectUnauthorized: false
+  });
+
+  socket_com.on('connect', function() {
+    var ifaces = os.networkInterfaces();
+    var hostIP;
+    var hostMAC;
+    Object.keys(ifaces).forEach( function( ifname ) {
+      ifaces[ ifname ].forEach( function( iface ) {
+        if ( 'IPv4' !== iface.family || false !== iface.internal ){
+          return;
+        }
+        hostIP = iface.address;
+        hostMAC = iface.mac;
+      });
+    });
+
+    socket_com.emit('verify-host', {
+      ipAddress: hostIP,
+      macAddress: hostMAC,
+      version: "0.0",
+    });
+
+
+    var computeUnit = {
+      name: "Eva-0",
+      ipAddress: socket_com.io.opts.hostname,
+      version: "0.0",
+      status: "Ready"
+    };
+
+    if ( computes.has( socket_com.io.opts.hostname )){
+      console.warn('Compute node is connected already!');
+      return;
+    }
+
+    addComputeUnit( computeUnit, socket_com );
+
+    console.log("Compute node is connected" );
+  });
+
+  socket_com.on('compute-node-status', ( msg ) => {
+    var compute = computes.get( socket_com.io.opts.hostname );
+    if ( compute ) {
+      compute.status = msg.status;
+    }
+  });
+
+  socket_com.on('reconstruct-log', function(msg) {
+    io.emit('reconstruct-log', msg.message.toString());
+  });
+
+  //@Lip download the reconstructed result
+  socket_com.on('reconstruct-complete', function( msg ) {
+    var filename = msg.name;
+    var stream   = ss.createStream({highWaterMark: 1024 * 1024 *10 });
+
+    console.log( "Start download reconstructed result : " + filename)
+    console.warn( "Please keep the network online." );
+
+    ss(socket_com).emit('post-package', stream, { name: filename });
+    var localName = path.basename( filename );
+    stream.pipe( fs.createWriteStream( "results/" + localName, {highWaterMark: 1024 * 1024 * 10 }).on('finish', ()=> {
+      console.log("Download completed.");
+      var computeUnit = computes.get( socket_com.io.opts.hostname );
+      computeUnit.status = "Ready";   // @Lip restore the status
+      io.emit('reconstruct-complete', {computeUnit:computeUnit});
+    }));
+  });
+
+  ss(socket_com).on('request-package', function(stream, data) {
+    console.log("Upload images pack.");
+    var filename = "./images/" + data.name;//path.basename( data.name );
+
+    var stats = fs.statSync( filename );
+    var fileSizeInBytes = stats["size"]
+    var size = 0;
+
+    fs.createReadStream( filename, {highWaterMark: 1024 * 1024 * 10 } ).on('data', function(chunk) {
+      size += chunk.length;
+      process.stdout.clearLine();
+      process.stdout.cursorTo(0);
+
+      var value = Math.floor(size / fileSizeInBytes * 100);
+
+      socket_com.emit('stream-progress', {value: value});
+
+      var progress = "";
+      for ( var i=0; i<value; ++i ){
+        progress += ">";
+      }
+      for ( var i = value; i < 100; ++i ){
+        progress += ".";
+      }
+      process.stdout.write( progress + " " + value + '%' );
+
+      if ( 100 == value ) {
+        process.stdout.write("\n"); // end the line
+        console.log("Images sent to compute-node(s)/cloud.");
+      }
+      //console.log(Math.floor(size / fileSizeInBytes * 100) + '%');   // -> e.g. '42%'
+    }).pipe( stream );
+  });
+
+  socket_com.on('stream-progress', function( msg ) {
+    process.stdout.clearLine();
+    process.stdout.cursorTo(0);
+
+    var progress = "";
+    var value = msg.value;
+
+    for ( var i=0; i<value; ++i ){
+      progress += ">";
+    }
+    for ( var i=value; i<100; ++i ){
+      progress += ".";
+    }
+    progress += ' ' + value + "%";
+    process.stdout.write( progress );
+    if ( 100 <= value ){
+      process.stdout.write('\n');
+    }
+  });
+
+  socket_com.on('disconnect', function(reason) {
+    console.log('Disconnected from compute node: ' + reason );
+    removeComputeUnit( socket_com.io.opts.hostname );  // @Lip save the socket
+  });
+}
+
+function computeNodeStatusUpdate() {
+  computeSockets.forEach( (value, key, map) => {
+    value.emit('compute-node-status', {});
+  });
+  io.emit('compute-update', Array.from( computes.values()) );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+findComputeNodes('https://192.168.10.17:3517');

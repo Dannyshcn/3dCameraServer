@@ -9,7 +9,6 @@
 
     <link rel="stylesheet" href="/css/bootstrap.min.css">
     <script src="/js/vue.js"></script>
-
     <style>
     .thumbnail {
         width: 100%;
@@ -22,7 +21,6 @@
 		background-image: linear-gradient(90deg, black, dimgrey);
     }
     </style>
-
 </head>
 <body>
 
@@ -34,8 +32,8 @@
                     3D Scanner Camera Coordinator
                 </span>
                 <input type="button" value="Take Photo" class="btn btn-success navbar-btn" v-on:click="takePhoto">
-				<input id="lights-button" type="button" value="Lights On" class="btn btn-success navbar-btn" v-on:click="lightSwitch">
-				<input style="position: absolute; right: 10px; opacity: 0.01;" type="button" value="Previeww" class="btn btn-success navbar-btn" v-on:click="enablePreview">
+				        <input id="lights-button" type="button" value="Lights On" class="btn btn-success navbar-btn" v-on:click="lightSwitch">
+				        <input style="position: absolute; right: 10px; opacity: 0.01;" type="button" value="Preview" class="btn btn-success navbar-btn" v-on:click="enablePreview">
             </div>
         </div>
     </nav>
@@ -48,14 +46,14 @@
                 </div>
             </div>
         </div>
-		<div id="cam-preview" class="row">
+	<!--	<div id="cam-preview" class="row">
             <div class="col-xs-3" style="border: solid 1px; margin: 5px 10px; padding: 0; max-width:400px;" v-for="camera in orderedCameras">
 				<img style="-webkit-user-select: none;margin: auto; min-width: 120px;" :src="'http://' + camera.ipAddress + ':8081'+ '?' + camera.preview">
                 <div class="caption">
                     <span>{{ camera.ipAddress }}</span>
                 </div>
             </div>
-        </div>
+        </div> -->
         <div class="row">
             <div class="col-xs-12">
                 Connected Cameras: <span id="cameraCount">{{ cameras.length }}</span>
@@ -69,46 +67,49 @@
                             <th>Photo Error</th>
                             <th>Version</th>
                             <th>New Name</th>
-							<th>Command Status</th>
+							              <th>Command Status</th>
                         </tr>
                     </thead>
                     <tbody id="cameraList">
                         <tr v-for="camera in orderedCameras" v-bind:class="{ danger: camera.lastUpdateProblem }">
-                            <td>{{ camera.name }}</td>
+                            <td v-html="camera.name"></td>
                             <td>{{ camera.ipAddress }}</td>
                             <td>{{ camera.timeSinceLastUpdate }}</td>
                             <td>{{ camera.photoStatus }}</td>
                             <td>{{ camera.photoError }}</td>
                             <td>{{ camera.version }}</td>
                             <td><input type="text" name="deviceName" @keyup.enter="updateName(camera.socketId, $event)"></td>
-							<td v-html="camera.command"></td>
+							              <td v-html="camera.command"></td>
                         </tr>
                     </tbody>
                 </table>
-				<table class="table2">
+                <div style="margin: 20px 5px; color: orange; font-size: 1.5em;">Compute Node(s)</div>
+                <table class="table" style="color: orange; font-size: 18px;">
                     <thead>
                         <tr>
                             <th>Name</th>
                             <th>IP</th>
-                            <th>Last Checkin</th>
-                            <th>Photo Status</th>
-                            <th>Photo Error</th>
                             <th>Version</th>
-                            <th>New Name</th>
+							              <th>Status</th>
+                            <th>Trigger</th>
+                            <th>Package</th>
                         </tr>
                     </thead>
-                    <tbody id="cameraList2">
-                        <tr v-for="camera in camerasMapList" v-bind:class="{ danger: camera.lastUpdateProblem }">
-                            <td>{{ camera.name }}</td>
-                            <td>{{ camera.ipAddress }}</td>
-                            <td>{{ camera.timeSinceLastUpdate }}</td>
-                            <td>{{ camera.photoStatus }}</td>
-                            <td>{{ camera.photoError }}</td>
-                            <td>{{ camera.version }}</td>
-                            <td><input type="text" name="deviceName" @keyup.enter="updateName(camera.socketId, $event)"></td>
+                    <tbody id="computeList" >
+                        <tr v-for="compute in orderedComputes" v-bind:class="{ danger: compute.warning }">
+                            <td v-html="compute.name"></td>
+                            <td>{{ compute.ipAddress }}</td>
+                            <td>{{ compute.version }}</td>
+							              <td v-html="compute.status"></td>
+                            <td><input v-bind:id='"btn-" + compute.ipAddress.replace(/\./g,"_")' type="button" value="Reconstruct" class="btn btn-info" v-bind:disabled='"Ready" !== compute.status' v-on:click="reconstructObj( $event, compute )"></td>
+                            <td><input v-bind:id='"dir-" + compute.ipAddress.replace(/\./g,"_")' type="file" value="Package" class="btn btn-info" v-bind:disabled='"Ready" !== compute.status' v-on:change="reconstructObj( $event, compute )" webkitdirectory multiple></td>
                         </tr>
                     </tbody>
                 </table>
+				        <div style="margin: 12px 5px; color: orange;">
+                  <h4>Reconstrunction log</h4>
+                  <div id='reconstruct-logger' style=" border: 1px solid;"></div>
+                </div>
                 <input type="button" value="Update Software" class="btn btn-info" v-on:click="updateSoftware">
 				<br>
 				<span>Execute following command to all connected clients</span><br>
