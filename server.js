@@ -12,15 +12,21 @@ var os = require('os');
 var fs = require('fs');
 var path = require('path');
 const process = require('process');
+var timesyncServer = require('timesync/server')
 
-var cameras = [];
+var connections = new Set();
+//var cameras = [];
+var projectorsMap = new Map();
 var camerasMap = new Map();
 
 var clientUpdateIntervalTimer;
+var projectorUpdateIntervalTimer;
 var computeNodeUpdateIntervalTimer;
 
 var lastestCapturedFolder = "";  //The folder contain the latest captured image
 
+// Connection timeout at most 5 secs
+server.setTimeout(5000);
 // Let the server listen on port 3000 for the websocket connection
 server.listen(3000);
 
@@ -28,8 +34,49 @@ app.get('/', function (request, response) {
     response.sendFile(__dirname + '/index.html');
 });
 
+app.use('/timeSync', timesyncServer.requestHandler );
+
+app.post('/new-images', upload.array('images', 2), function (request, response, next) {
+  console.log("Receieved new images ", request.body.socketId );
+  if ( !request.files || request.files.length !== 2 || !request.body.startTime ){
+    console.log("Upload failure.");
+    return;
+  }
+
+  let folderName = getFolderName(request.body.startTime);
+  let imagePath  = './images/' + folderName + '/normal/' + request.body.fileName;
+  let imageProjPath = './images/' + folderName + '/project/' + request.body.fileName;
+
+  var renameFile = function(name, new_name){
+    fs.rename(name, new_name, function(err) {
+        if (err) throw err;
+        fs.unlink(name, function() {
+            if (err) throw err;
+        });
+    });
+  }
+
+  renameFile(request.files[0].path, imagePath);
+  renameFile(request.files[1].path, imageProjPath);
+
+  var camera = camerasMap.get(request.body.socketId)//( request.body.cameraName );
+  if ( undefined === camera ){
+    console.trace("Error : Connection is not registered " + request.body.socketId );
+  } else {
+    camera.photoError     = false;
+    camera.waitingOnPhoto = false;
+    camera.photoSending   = false;
+    camera.receivedPhoto  = true;
+    camera.latestImage    = folderName + '/' + request.body.fileName;
+  }
+
+  lastestCapturedFolder = folderName;
+  response.sendStatus(201);
+
+});
 
 app.post('/new-image', upload.single('image'), function (request, response) {
+  return;
     console.log("received a new image", request.body.socketId);
     if (!request.file || !request.body.startTime) {
 		console.log("Returning");
@@ -47,17 +94,26 @@ app.post('/new-image', upload.single('image'), function (request, response) {
         if (err) throw err;
 
         // The camera has been moved to the right place, update our data array to show this
-        var i = findCameraIndexByName(request.body.cameraName);
-		if ( i < cameras.length ){
-			cameras[i].photoError     = false;
-			cameras[i].waitingOnPhoto = false;
-			cameras[i].photoSending   = false;
-			cameras[i].receivedPhoto  = true;
-			cameras[i].latestImage    = folderName + '/' + request.body.fileName;
-		}else{
-			console.log("Camera not found: " + request.body.cameraName );
-		}
-
+        /*var i = findCameraIndexByName(request.body.cameraName);
+    		if ( i < cameras.length ){
+    			cameras[i].photoError     = false;
+    			cameras[i].waitingOnPhoto = false;
+    			cameras[i].photoSending   = false;
+    			cameras[i].receivedPhoto  = true;
+    			cameras[i].latestImage    = folderName + '/' + request.body.fileName;
+    		}else{
+    			console.log("Camera not found: " + request.body.cameraName );
+    		}*/
+        var camera = camerasMap.get(request.body.socketId)//( request.body.cameraName );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + request.body.socketId );
+        } else {
+          camera.photoError     = false;
+          camera.waitingOnPhoto = false;
+          camera.photoSending   = false;
+          camera.receivedPhoto  = true;
+          camera.latestImage    = folderName + '/' + request.body.fileName;
+        }
 
         fs.unlink(tmpPath, function() {
             if (err) throw err;
@@ -79,41 +135,47 @@ app.listen(8080, function () {
 
 // When a new camera connects set up the following
 io.on('connection', function (socket) {
-  console.log('A connection was made:', cameras.length + " " + socket.id);
+  console.log('A connection was made:', connections.size + " " + socket.id);
 
+  if ( !connections.has(socket.id)){
+    connections.add(socket.id);
+  }else{
+    console.log("Connections reconnecting : " + socket.id );
+  }
   // Add the camera to a persistent list of devices
-  cameras.push({
-    socketId: socket.id,
-    type: null,
-    name: null,
-    ipAddress: null,
-    photoError: false,
-    photoTaken: false,
-    waitingOnPhoto: false,
-    lastCheckin: null,
-    photoSending: false,
-    receivedPhoto: false,
-    version: null,
-    photoStatus: null
-  });
-
-
-	//@Lip allow multi-cameras for 1 client
-	if ( !camerasMap.has( socket.id )){	//If no record is found for this 'client'
-		camerasMap.set( socket.id, new Map());
-	}
+  /*
+  var i = findCameraIndex(socket.id);
+  if ( undefined == i ){//Camera not registered before
+    cameras.push({
+      socketId: socket.id,
+      type: null,
+      name: null,
+      ipAddress: null,
+      photoError: false,
+      photoTaken: false,
+      waitingOnPhoto: false,
+      lastCheckin: null,
+      photoSending: false,
+      receivedPhoto: false,
+      version: null,
+      photoStatus: null
+    });
+  }*/
 
 //	console.log( camerasMap );
 
   // Listen for heartbeat notifications from the cameras
   socket.on('camera-online', function(msg){
     // Update our cache
+    /*
     var i = findCameraIndex(socket.id);
     cameras[i].type             = 'camera';
     cameras[i].name             = msg.name;
     cameras[i].ipAddress        = msg.ipAddress;
     cameras[i].lastCheckin      = new Date();
     cameras[i].updateInProgress = msg.updateInProgress;
+    cameras[i].DSLRBatteryLevel = msg.DSLR_battery;
+
     if (msg.version) {
         cameras[i].version = msg.version;
     }
@@ -122,67 +184,81 @@ io.on('connection', function (socket) {
     } else {
         cameras[i].hostName = null;
     }
+*/
 
       //io.emit('camera-update', cameras);
 
 		//@Lip update the cams for client
 		// Update our cache
-		var client_cams = camerasMap.get( socket.id );
-		var cam;
-		if ( client_cams.has( msg.name )){
-			cam = client_cams.get( msg.name );
-		}else{
-			client_cams.set( msg.name, {});
-			cam = client_cams.get( msg.name );
+		var camera = camerasMap.get( socket.id );
+		if ( undefined == camera ){
+      camera = {
+        socketId : socket.id,
+      }
+      camerasMap.set( socket.id, camera );
 		}
-		cam.type             = 'camera';
-		cam.name             = msg.name;
-		cam.ipAddress        = msg.ipAddress;
-		cam.lastCheckin      = new Date();
-		cam.updateInProgress = msg.updateInProgress;
+		camera.type             = 'camera';
+		camera.name             = msg.name;
+		camera.ipAddress        = msg.ipAddress;
+		camera.lastCheckin      = new Date();
+		camera.updateInProgress = msg.updateInProgress;
+    camera.DSLRBatteryLevel = msg.DSLR_battery;
 		if (msg.version) {
-			cam.version = msg.version;
+			camera.version = msg.version;
 		}
 		if (msg.hostName) {
-			cam.hostName = msg.hostName;
+			camera.hostName = msg.hostName;
 		} else {
-			cam.hostName = null;
+			camera.hostName = null;
 		}
   });
 
-    // Listen for heartbeat notifications from the cameras
-    socket.on('compute-online', function(msg){
-
-        // Update our cache
-        var i = findCameraIndex(socket.id);
-        cameras[i].type             = 'compute';
-        cameras[i].name             = "<span style='color: yellow'>" + msg.name + "Done</span>";
-        cameras[i].ipAddress        = msg.ipAddress;
-        cameras[i].lastCheckin      = new Date();
-        cameras[i].updateInProgress = msg.updateInProgress;
-        if (msg.version) {
-            cameras[i].version = msg.version;
-        }
-        if (msg.hostName) {
-            cameras[i].hostName = msg.hostName;
-        } else {
-            cameras[i].hostName = null;
-        }
-        //io.emit('camera-update', cameras);
-        console.log("Compute onlineeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    // Listen for heartbeat notifications from the projectors
+    socket.on('projector-online', function(msg){
+      // Update our cache
+      var projector = projectorsMap.get(socket.id);
+      if ( undefined == projector ){
+        projector = {
+          type: 'projector',
+        };
+        projectorsMap.set( socket.id, projector );
+      }
+      projector.name             = msg.name;
+      projector.ipAddress        = msg.ipAddress;
+      projector.lastCheckin      = new Date();
+      projector.updateInProgress = msg.updateInProgress;
+      if (msg.version) {
+          projector.version = msg.version;
+      }
+      if (msg.hostName) {
+          projector.hostName = msg.hostName;
+      } else {
+          projector.hostName = null;
+      }
+      //io.emit('camera-update', cameras);
     });
 
     // Sent by the web interface
     socket.on('client-online', function(msg){
+      // Update our cache
+      /*var i = findCameraIndex(socket.id);
+      cameras[i].type = 'client';
+      */
+      var client = camerasMap.get( socket.id );
+      if ( undefined == client ){
+        client = {
+          socketId : socket.id,
+        }
+        camerasMap.set( socket.id, client );
+      }
 
-        // Update our cache
-        var i = findCameraIndex(socket.id);
-        cameras[i].type = 'client';
+      client.type = 'client';
 
-		    console.log("========---Client---=========");
+	    console.log("========---Client---=========");
 
-        clientUpdateIntervalTimer = setInterval(clientUpdate, 200);
-        computeNodeUpdateIntervalTimer = setInterval( computeNodeStatusUpdate, 3000);
+      clientUpdateIntervalTimer = setInterval(clientUpdate, 200);
+      projectorUpdateIntervalTimer = setInterval(projectorUpdate, 200);
+      computeNodeUpdateIntervalTimer = setInterval( computeNodeStatusUpdate, 3000);
     });
 
     socket.on('reconstruct-obj', function(msg) {
@@ -198,10 +274,16 @@ io.on('connection', function (socket) {
         io.emit('reconstruct-complete', {computeUnit:computeUnit});
         return;
       }
+      /*
       // Update our cache
       var i = findCameraIndex(socket.id);
       console.log("Reconstruct signal reciever: " + i );
       if ( cameras[i].type !== 'client'){
+        return;
+      }
+      */
+      var client = camerasMap.get( socket.id );
+      if ( undefined === client || 'client' !== client.type ){
         return;
       }
 
@@ -209,18 +291,30 @@ io.on('connection', function (socket) {
       let folderName = './images/' ;
       var packageName = path.basename(targetFolder);
       var filename = folderName + "/" + packageName + '.zip';
-      var AdmZip = require('adm-zip');
-      var zip = new AdmZip();
-      zip.addLocalFolder( folderName + "/" + packageName );
-      zip.writeZip( filename );
+      const node7z = require('node-7z');
+      //var zip = new AdmZip();
+      //zip.addLocalFolder( folderName + "/" + packageName );
+      //zip.writeZip( filename );
 
-      if ( computeSockets.has( computeUnit.ipAddress )) {
-        computes.get( computeUnit.ipAddress ).status = "Busy";  // @Lip change the status to busy
-        var socket_c = computeSockets.get( computeUnit.ipAddress );
-        socket_c.emit('reconstruct-obj', {name: packageName + '.zip'});
-      }else{
-        console.warn("Invalid compute node :" + computeUnit.ipAddress );
-      }
+      node7z.add( filename, folderName + "/" + packageName + "/*", { recursive: true, $progress: true } )
+      .on('progress', (progress) => {
+        if ( computes.has( computeUnit.ipAddress )){
+          computes.get( computeUnit.ipAddress ).progress = progress.percent;
+        }
+      })
+      .on('end', () => {
+        console.log("Zipped package!");
+        if ( computeSockets.has( computeUnit.ipAddress )) {
+          computes.get( computeUnit.ipAddress ).status = "Busy";  // @Lip change the status to busy
+          var socket_c = computeSockets.get( computeUnit.ipAddress );
+          socket_c.emit('reconstruct-obj', {name: packageName + '.zip'});
+        }else{
+          console.warn("Invalid compute node :" + computeUnit.ipAddress );
+        }
+      })
+      .on('error', (error) => {
+        console.error(error);
+      });
 
       // Invoke the next step here however you like
       //console.log(data);   // Put all of the code here (not the best solution)
@@ -229,18 +323,33 @@ io.on('connection', function (socket) {
     });
 
     socket.on('disconnect', function(msg, msg2) {
+      /*
         var i = findCameraIndex(socket.id);
         cameras.splice(i, 1);
+*/
+      if ( !connections.delete( socket.id )){
+        console.log("Disconnecting not registered connection : " + socket.id );
+      }
 
-		//@Lip refresh the cameras Map
-		camerasMap.delete( socket.id );
-
-        io.emit('camera-update', cameras);
 		//io.emit('camerasMap-update', camerasMap);	//@Lip update camersa
+      var client = camerasMap.get( socket.id );
+      if ( client && client.type == 'client') {
+          clearInterval(clientUpdateIntervalTimer);
+          clearInterval(projectorUpdateIntervalTimer);
+          clearInterval(computeNodeUpdateIntervalTimer)
+      }
+      //@Lip refresh the cameras Map
+      if ( camerasMap.delete( socket.id )){
+        console.log("Camera disconnected : " + socket.id );
+        io.emit('camera-update', Array.from(camerasMap.values()));
+      }
+      //@Lip refresh the projector map
+      if ( projectorsMap.delete( socket.id )){
+        console.log("Projector disconnected : " + socket.id );
+        io.emit('projector-update', Array.from(projectorsMap.values()));
+      }
 
-        if (cameras[i] && cameras[i].type == 'type') {
-            clearInterval(clientUpdateIntervalTimer);
-        }
+      console.log( "Socket disconnected : " + socket.id + "\n" + msg + "\n" + msg2 );
     });
 
 	//
@@ -258,6 +367,56 @@ io.on('connection', function (socket) {
 
     });
 
+    socket.on('timeSync-test', function(msg){
+      io.emit('timeSync-test', msg);
+    });
+
+    socket.on('timeSync-return', function(msg){
+      //console.log( "Return called");
+      /*var i = findCameraIndex(socket.id);
+      if ( msg.executeDelta ){
+        cameras[i].photoTimeDelta = msg.executeDelta.toFixed(1);
+      }
+      if ( msg.executeDelta_DSLR ){
+        cameras[i].photoTimeDelta_DSLR = msg.executeDelta_DSLR.toFixed(1);
+      }
+      if ( msg.networkLatency ){
+        cameras[i].networkLatency  = msg.networkLatency.toFixed(1);
+      }
+      if ( msg.networkLatency_DSLR ){
+        console.log( cameras[i].name + "    " + msg.networkLatency_DSLR );
+        cameras[i].networkLatency_DSLR  = msg.networkLatency_DSLR.toFixed(1);
+        console.log( cameras[i].name + "    " + cameras[i].networkLatency_DSLR );
+      }
+      //console.log( "Network latency delta: " + msg.networkLatency + " -- Diff : " + cameras[i].photoTimeDelta );
+*/
+      var camera = camerasMap.get( socket.id );
+      if ( camera ){
+        if ( msg.executeDelta ){
+          camera.photoTimeDelta = msg.executeDelta.toFixed(1);
+        }
+        if ( msg.executeDelta_DSLR ){
+          camera.photoTimeDelta_DSLR = msg.executeDelta_DSLR.toFixed(1);
+        }
+        if ( msg.networkLatency ){
+          camera.networkLatency  = msg.networkLatency.toFixed(1);
+        }
+        if ( msg.networkLatency_DSLR ){
+          camera.networkLatency_DSLR  = msg.networkLatency_DSLR.toFixed(1);
+        }
+        return;
+      }
+      var projector = projectorsMap.get( socket.id );
+      if ( projector ){
+        if ( msg.executeDelta ){
+          projector.photoTimeDelta = msg.executeDelta.toFixed(1);
+        }
+        if ( msg.networkLatency ){
+          projector.networkLatency  = msg.networkLatency.toFixed(1);
+        }
+        return;
+      }
+    });
     // When a take photo message comes in create the folder, update the cameras and pass on the take message to devices
     socket.on('take-photo', function(msg){
         console.log("Take a new photo");
@@ -266,19 +425,70 @@ io.on('connection', function (socket) {
 
         if (!fs.existsSync(folderName)) {
             fs.mkdirSync(folderName);
+            fs.mkdirSync(folderName + '/normal');
+            fs.mkdirSync(folderName + '/project');
         }
         msg.socketId = socket.id;
         io.emit('take-photo', msg);
+/*
+        for (let i = 0; i < cameras.length; i++) {
+            if (cameras[i].type == 'camera') {
+                cameras[i].waitingOnPhoto = true;
+                cameras[i].receivedPhoto  = false;
+                cameras[i].photoTimeDelta  = null;
+                cameras[i].photoTimeDelta_DSLR  = null;
+                cameras[i].networkLatency  = null;
+                cameras[i].networkLatency_DSLR  = null;
+            }
+        }
+*/
+        camerasMap.forEach((camera, key) => {
+          if ( 'camera' == camera.type ){
+            camera.waitingOnPhoto = true;
+            camera.receivedPhoto  = false;
+            camera.photoTimeDelta  = null;
+            camera.photoTimeDelta_DSLR  = null;
+            camera.networkLatency  = null;
+            camera.networkLatency_DSLR  = null;
+          }
+        });
+        projectorsMap.forEach((projector, key) => {
+          projector.photoTimeDelta  = null;
+          projector.networkLatency  = null;
+        });
 
+    });
+
+    //@Lip for DSLR Support
+    socket.on('take-photo-DSLR', function(msg){
+        console.log("Take a new photo (DSLR)");
+
+        let folderName = './images/' + getFolderName(msg.time);
+
+        if (!fs.existsSync(folderName)) {
+            fs.mkdirSync(folderName);
+            fs.mkdirSync(folderName + '/normal');
+            fs.mkdirSync(folderName + '/project');
+        }
+        msg.socketId = socket.id;
+        io.emit('take-photo-DSLR', msg);
+/*
         for (let i = 0; i < cameras.length; i++) {
             if (cameras[i].type == 'camera') {
                 cameras[i].waitingOnPhoto = true;
                 cameras[i].receivedPhoto  = false;
             }
-        }
+        }*/
+
+        camerasMap.forEach((camera, key) => {
+          if (camera.type == 'camera') {
+              camera.waitingOnPhoto = true;
+              camera.receivedPhoto  = false;
+          }
+        });
+
 
     });
-
 
 	socket.on('lights-switch', function(msg){
 		var state = msg.state;
@@ -295,32 +505,50 @@ io.on('connection', function (socket) {
     socket.on('update-name', function(msg){
         console.log("Updating device name");
 
-        var i = findCameraIndex(msg.socketId);
+//        var i = findCameraIndex(msg.socketId);
+
+        var camera = camerasMap.get( msg.socketId );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + msg.socketId );
+          return;
+        }
 
         // Broadcast a message but pass the ip of the camera that needs to respond
-        io.emit('update-name', {ipAddress: cameras[i].ipAddress, newName: msg.newName});
+        io.emit('update-name', {ipAddress: camera.ipAddress, newName: msg.newName});
     });
 
 
     socket.on('sending-photo', function(msg){
-        var i = findCameraIndex(socket.id);
-        cameras[i].photoSending = true;
+        //var i = findCameraIndex(socket.id);
+
+        var camera = camerasMap.get( socket.id );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + msg.socketId );
+          return;
+        }
+
+        camera.photoSending = true;
     });
 
 
     // When a new photo comes in save it and send it on to the client
     socket.on('new-photo', function(msg){
         console.log("New photo data");
-        var i = findCameraIndex(socket.id);
-        cameras[i].photoError = false;
-        cameras[i].photoTaken = true;
+        //var i = findCameraIndex(socket.id);
+        var camera = camerasMap.get( socket.id );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + msg.socketId );
+          return;
+        }
+        camera.photoError = false;
+        camera.photoTaken = true;
         //cameras[i].waitingOnPhoto = false;
         //cameras[i].photoSending   = false;
         //cameras[i].receivedPhoto  = true;
 
         let folderName = getFolderName(msg.startTime);
 
-        msg.cameraName = cameras[i].name;
+        msg.cameraName = camera.name;
         msg.imagePath  = folderName + '/' + msg.fileName;
 
         //io.emit('new-photo', msg);
@@ -364,11 +592,16 @@ io.on('connection', function (socket) {
 
     // There was an error taking a photo, update our data and the clients
     socket.on('photo-error', function(msg){
-        var i = findCameraIndex(socket.id);
-        cameras[i].photoError     = true;
-        cameras[i].waitingOnPhoto = false;
-        cameras[i].photoSending   = false;
-        cameras[i].receivedPhoto  = false;
+        //var i = findCameraIndex(socket.id);
+        var camera = camerasMap.get( socket.id );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + msg.socketId );
+          return;
+        }
+        camera.photoError     = true;
+        camera.waitingOnPhoto = false;
+        camera.photoSending   = false;
+        camera.receivedPhoto  = false;
         io.emit('photo-error', msg);
         //io.emit('camera-update', cameras);
     });
@@ -376,25 +609,53 @@ io.on('connection', function (socket) {
 
 	//@Lip command responses
     socket.on('command-finished', function(msg){
-        var i = findCameraIndex(socket.id);
-        cameras[i].command = "<span style='color: greenyellow'>Done</span>";
-        io.emit('command-finished', cameras[i].ipAddress + ":" + msg);
-        io.emit('camera-update', cameras);
+        //var i = findCameraIndex(socket.id);
+        var camera = camerasMap.get( socket.id );
+        if ( undefined === camera ){
+          console.trace("Error : Connection is not registered " + msg.socketId );
+          return;
+        }
+
+        camera.command = "<span style='color: greenyellow'>Done</span>";
+        io.emit('command-finished', camera.ipAddress + ":" + msg);
+        io.emit('camera-update', Array.from(camerasMap.values()));
     });
 
 	//@Lip command responses
     socket.on('command-error', function(msg){
-		console.log( msg );
-        var i = findCameraIndex(socket.id);
-        cameras[i].command = "<span style='color: red'>Failed</span>";
-		msg.id = socket.id;
-        io.emit('command-error', cameras[i].ipAddress + ":" + msg);
-        io.emit('camera-update', cameras);
+		  console.log( msg );
+      //var i = findCameraIndex(socket.id);
+      var camera = camerasMap.get( socket.id );
+      if ( undefined === camera ){
+        console.trace("Error : Connection is not registered " + msg.socketId );
+        return;
+      }
+      camera.command = "<span style='color: red'>Failed</span>";
+		  msg.id = socket.id;
+      io.emit('command-error', camera.ipAddress + ":" + msg);
+      io.emit('camera-update', Array.from(camerasMap.values()));
     });
 });
 
 function clientUpdate() {
-
+  // Generate a status message for the camera
+  camerasMap.forEach((camera, key) => {
+    let photoStatus = 'standby';
+    if (camera.waitingOnPhoto) {
+        photoStatus = 'taking';
+    }
+    if (camera.photoSending) {
+        photoStatus = 'sending';
+    }
+    if (camera.receivedPhoto) {
+        photoStatus = 'received';
+    }
+    if (camera.updateInProgress) {
+        photoStatus = 'updating-software';
+    }
+    camera.photoStatus = photoStatus;
+  });
+/*
     // Generate a status message for the camera
     for (let i = 0; i < cameras.length; i++) {
         let photoStatus = 'standby';
@@ -412,12 +673,14 @@ function clientUpdate() {
         }
         cameras[i].photoStatus = photoStatus;
     }
+*/
 
-
-    io.emit('camera-update', cameras);
+    //io.emit('camera-update', cameras);
+    io.emit('camera-update', Array.from( camerasMap.values()));
     io.emit('compute-update', Array.from( computes.values()) );
 	//io.emit('camerasMap-update', camerasMap);	//@Lip update camerasMap
 
+/*
     // See if any of the cameras have a new image
     for (let i = 0; i < cameras.length; i++) {
         if (cameras[i].receivedPhoto) {
@@ -429,7 +692,25 @@ function clientUpdate() {
             }
             io.emit('new-photo', msg);
         }
-    }
+    }*/
+    // See if any of the cameras have a new image
+    camerasMap.forEach((camera, key) => {
+      if (camera.receivedPhoto) {
+          camera.receivedPhoto = false;
+
+          msg = {
+              cameraName: camera.name,
+              imagePath: camera.latestImage
+          }
+          io.emit('new-photo', msg);
+      }
+    });
+
+}
+
+function projectorUpdate()
+{
+  io.emit('projector-update', Array.from( projectorsMap.values()));
 }
 
 
@@ -450,6 +731,14 @@ function findCameraIndexByName(name) {
     }
 }
 
+function findCameraByName(name){
+  var cameras = Array.from( camerasMap.values());
+  for (let i = 0; i < cameras.length; i++) {
+      if (cameras[i].name === name) {
+          return cameras[i];
+      }
+  }
+}
 
 // Generate a folder name based on the timestamp
 function getFolderName(time) {
@@ -524,6 +813,7 @@ function findComputeNodes( computeIP )
       name: "Eva-0",
       ipAddress: socket_com.io.opts.hostname,
       version: "0.0",
+      progress: 0,
       status: "Ready"
     };
 
@@ -573,6 +863,7 @@ function findComputeNodes( computeIP )
     var stats = fs.statSync( filename );
     var fileSizeInBytes = stats["size"]
     var size = 0;
+    var computeUnit = computes.get( socket_com.io.opts.hostname );
 
     fs.createReadStream( filename, {highWaterMark: 1024 * 1024 * 10 } ).on('data', function(chunk) {
       size += chunk.length;
@@ -582,6 +873,8 @@ function findComputeNodes( computeIP )
       var value = Math.floor(size / fileSizeInBytes * 100);
 
       socket_com.emit('stream-progress', {value: value});
+
+      computeUnit.progress = value;
 
       var progress = "";
       for ( var i=0; i<value; ++i ){
@@ -606,6 +899,8 @@ function findComputeNodes( computeIP )
 
     var progress = "";
     var value = msg.value;
+    var computeUnit = computes.get( socket_com.io.opts.hostname );
+    computeUnit.progress = 100 - value; //
 
     for ( var i=0; i<value; ++i ){
       progress += ">";
@@ -638,3 +933,5 @@ function sleep(ms) {
 }
 
 findComputeNodes('https://192.168.10.17:3517');
+findComputeNodes('https://192.168.1.107:3517');
+findComputeNodes('https://192.168.10.183:3517');

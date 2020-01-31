@@ -7,6 +7,7 @@ var app = new Vue({
         message: 'Hello Vue!',
         cameras: [],
         computes: [],
+        projectors: [],
         photos: [
             {
                 imagePath: '/img/placeholder.png',
@@ -30,10 +31,11 @@ var app = new Vue({
     computed: {
         orderedCameras: function () {
             return this.cameras.sort(function(a, b){
-                if (isNaN(a) || isNaN(b)) {
-                    return -1;
-                }
-                return a - b;
+                return a.name.localeCompare( b.name );
+                //if (isNaN(a) || isNaN(b)) {
+                //    return -1;
+                //}
+                //return a - b;
             });
         },
         orderedComputes: function() {
@@ -68,11 +70,63 @@ var app = new Vue({
                 response[i].lastUpdateProblem = lastUpdateProblem;
                 response[i].timeSinceLastUpdate = timeSinceLastUpdate;
 
+                if ( "Disconnect" == response[i].DSLRBatteryLevel ){
+                  response[i].DSLRBatteryLevel_color = "red";
+                } else if ( "50%" == response[i].DSLRBatteryLevel ){
+                  response[i].DSLRBatteryLevel_color = "yellow";
+                } else if ( "25%" == response[i].DSLRBatteryLevel ){
+                  response[i].DSLRBatteryLevel_color = "orange";
+                }
+
+                if ( response[i].photoTimeDelta ){
+                  if ( 16.7 < Math.abs( response[i].photoTimeDelta )){
+                    response[i].photoTimeDelta_color = "orange";
+                  }
+                }else{
+                  response[i].networkLatency = response[i].photoTimeDelta = "";
+                }
+                response[i].photoTimeDelta = response[i].photoTimeDelta + "/" + response[i].networkLatency;
+
+                if ( response[i].photoTimeDelta_DSLR ){
+                  if ( 16.7 < Math.abs( response[i].photoTimeDelta_DSLR )){
+                    response[i].photoTimeDelta_DSLR_color = "orange";
+                  }
+                }else{
+                  response[i].networkLatency_DSLR = response[i].photoTimeDelta_DSLR = "";
+                }
+                response[i].photoTimeDelta_DSLR = response[i].photoTimeDelta_DSLR + "/" + response[i].networkLatency_DSLR;
+
+
       					if ( oldCams[i] ){
       						response[i].preview = oldCams[i].preview;
       					}
                 that.cameras.push(response[i]);
             }
+          }
+        });
+
+        //Update the projectors info. in frontend
+        this.socket.on('projector-update', function(response){
+          that.projectors = [];
+          for ( var i=0; i<response.length; ++i ){
+            //Timing
+            lastUpdateProblem = false;
+            var timeSinceLastUpdate = Math.round((new Date() - new Date(response[i].lastCheckin)) / 100) / 10;
+            if ( timeSinceLastUpdate > 10 ) {  //@Lip if the camera is not sending photo and not signalling a checkin in 10 secs
+                lastUpdateProblem = true;
+            }
+            response[i].lastUpdateProblem = lastUpdateProblem;
+            response[i].timeSinceLastUpdate = timeSinceLastUpdate;
+
+            if ( response[i].photoTimeDelta ){
+              if ( 16.7 < Math.abs( response[i].photoTimeDelta )){
+                response[i].photoTimeDelta_color = "orange";
+              }
+            }else{
+              response[i].networkLatency = response[i].photoTimeDelta = "";
+            }
+            response[i].photoTimeDelta = response[i].photoTimeDelta + "/" + response[i].networkLatency;
+            that.projectors.push(response[i]);
           }
         });
 
@@ -128,6 +182,10 @@ var app = new Vue({
       that.photos = [];
       $()
     });
+    this.socket.on('take-photo-DSLR', function(data){
+      that.photos = [];
+      $()
+    });
 
     this.socket.on('reconstruct-complete', function(data) {
       var computeUnit = data.computeUnit;
@@ -148,8 +206,22 @@ var app = new Vue({
     methods: {
         takePhoto: function () {
             takeId = guid();
-            this.socket.emit('take-photo', {takeId: takeId, time: Date.now()});
-			this.socket.emit('take-photo-webcam', {takeId: takeId, time: Date.now()});	//@Lip add for WebCam support
+            var countDown = 10000; //10 seconds, should be at least 2 secs
+            var gg = this;
+            var currentTime = Date.now();
+
+            this.socket.emit('take-photo-DSLR', {takeId: takeId, time: currentTime, countDown: countDown });
+
+            setTimeout(function(){
+              gg.socket.emit('take-photo', {takeId: takeId, time: currentTime, countDown: countDown });
+            }, 1000 );
+
+            //this.socket.emit('timeSync-test',{time:Date.now(), countDown: countDown});
+			      //this.socket.emit('take-photo-webcam', {takeId: takeId, time: Date.now()});	//@Lip add for WebCam support
+        },
+        takePhoto_DSLR: function() {
+          takeId = guid();
+          this.socket.emit('take-photo-DSLR', {takeId: takeId, time: Date.now()});
         },
         updateSoftware: function () {
             this.socket.emit('update-software', {});

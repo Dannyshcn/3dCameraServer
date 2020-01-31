@@ -1,1 +1,10 @@
-/node_modules
+*
+!/uploads
+!/images
+!/static
+!.gitignore
+!index.html
+!package.json
+!README.md
+!server.js
+!yarn.lock

@@ -29,10 +29,11 @@
         <div class="container-fluid">
             <div class="navbar-header">
                 <span class="navbar-brand" href="#">
-                    3D Scanner Camera Coordinator
+                    R-Scan - Central Management Console
                 </span>
                 <input type="button" value="Take Photo" class="btn btn-success navbar-btn" v-on:click="takePhoto">
 				        <input id="lights-button" type="button" value="Lights On" class="btn btn-success navbar-btn" v-on:click="lightSwitch">
+                <input type="button" value="Take Photo (DSLR)" class="btn btn-success navbar-btn" v-on:click="takePhoto_DSLR">
 				        <input style="position: absolute; right: 10px; opacity: 0.01;" type="button" value="Preview" class="btn btn-success navbar-btn" v-on:click="enablePreview">
             </div>
         </div>
@@ -46,14 +47,14 @@
                 </div>
             </div>
         </div>
-	<!--	<div id="cam-preview" class="row">
+	    	<div id="cam-preview" class="row" style="display: none;">
             <div class="col-xs-3" style="border: solid 1px; margin: 5px 10px; padding: 0; max-width:400px;" v-for="camera in orderedCameras">
 				<img style="-webkit-user-select: none;margin: auto; min-width: 120px;" :src="'http://' + camera.ipAddress + ':8081'+ '?' + camera.preview">
                 <div class="caption">
                     <span>{{ camera.ipAddress }}</span>
                 </div>
             </div>
-        </div> -->
+        </div>
         <div class="row">
             <div class="col-xs-12">
                 Connected Cameras: <span id="cameraCount">{{ cameras.length }}</span>
@@ -65,6 +66,9 @@
                             <th>Last Checkin</th>
                             <th>Photo Status</th>
                             <th>Photo Error</th>
+                            <th>Deltas</th>
+                            <th>Deltas (DSLR)</th>
+                            <th>Battery</th>
                             <th>Version</th>
                             <th>New Name</th>
 							              <th>Command Status</th>
@@ -77,9 +81,37 @@
                             <td>{{ camera.timeSinceLastUpdate }}</td>
                             <td>{{ camera.photoStatus }}</td>
                             <td>{{ camera.photoError }}</td>
+                            <td v-bind:style="{color: camera.photoTimeDelta_color}">{{ camera.photoTimeDelta }}</td>
+                            <td v-bind:style="{color: camera.photoTimeDelta_DSLR_color}">{{ camera.photoTimeDelta_DSLR }}</td>
+                            <td v-bind:style="{color: camera.DSLRBatteryLevel_color}">{{ camera.DSLRBatteryLevel }}</td>
                             <td>{{ camera.version }}</td>
                             <td><input type="text" name="deviceName" @keyup.enter="updateName(camera.socketId, $event)"></td>
 							              <td v-html="camera.command"></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div style="color: grey;">
+                  Connected Projectors: <span id="projectorCount" >{{ projectors.length }}</span>
+                </div>
+                <table class="table" style="color: grey; font-size: 18px;">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>IP</th>
+                            <th>Last Checkin</th>
+                            <th>Deltas</th>
+                            <th>Version</th>
+							              <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="projectorList" >
+                        <tr v-for="projector in projectors" v-bind:class="{ danger: projector.warning }">
+                            <td v-html="projector.name"></td>
+                            <td>{{ projector.ipAddress }}</td>
+                            <td>{{ projector.timeSinceLastUpdate }}</td>
+                            <td v-bind:style="{color: projector.photoTimeDelta_color}">{{ projector.photoTimeDelta }}</td>
+                            <td>{{ projector.version }}</td>
+							              <td v-html="projector.status"></td>
                         </tr>
                     </tbody>
                 </table>
@@ -92,6 +124,7 @@
                             <th>Version</th>
 							              <th>Status</th>
                             <th>Trigger</th>
+                            <th>Progress</th>
                             <th>Package</th>
                         </tr>
                     </thead>
@@ -102,6 +135,7 @@
                             <td>{{ compute.version }}</td>
 							              <td v-html="compute.status"></td>
                             <td><input v-bind:id='"btn-" + compute.ipAddress.replace(/\./g,"_")' type="button" value="Reconstruct" class="btn btn-info" v-bind:disabled='"Ready" !== compute.status' v-on:click="reconstructObj( $event, compute )"></td>
+                            <td><progress v-bind:id='"progress-" +  compute.ipAddress.replace(/\./g,"_")' v-bind:value="compute.progress" max="100"></progress></td>
                             <td><input v-bind:id='"dir-" + compute.ipAddress.replace(/\./g,"_")' type="file" value="Package" class="btn btn-info" v-bind:disabled='"Ready" !== compute.status' v-on:change="reconstructObj( $event, compute )" webkitdirectory multiple></td>
                         </tr>
                     </tbody>
